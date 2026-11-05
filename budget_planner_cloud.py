@@ -1,6 +1,8 @@
 """
 Budget Planner - hosted version (Streamlit + Google Sheets)
 
+- Supports 1 to 4 people, names typed in the app.
+- Pick which buckets to use from a dropdown and set a percentage for each (must total 100%).
 - On Streamlit Community Cloud: password-protected, history saved in Google Sheets.
 - On your own computer with no secrets set up: no password, history saved to a local CSV.
 """
@@ -14,13 +16,17 @@ import pandas as pd
 import streamlit as st
 
 # ---------- EDIT THESE ----------
-NAMES = ("Sam", "Priyanka")          # change "Partner" to her name
-
-SPLIT = {                            # must add up to 100
-    "Investments": 50,
-    "Variable expenses": 30,
-    "Emergency fund": 20,
+PRESET_BUCKETS = ["Essential expenses", "Investments", "Variable expenses", "Emergency fund"]
+ 
+DEFAULT_SPLIT = {                    # pre-filled percentages
+    "Essential expenses": 40,
+    "Investments": 30,
+    "Variable expenses": 20,
+    "Emergency fund": 10,
 }
+ 
+MAX_PEOPLE = 4
+DEFAULT_NAMES = ["Sam", "Priyanka", "Person 3", "Person 4"]
 # --------------------------------
 
 LOCAL_CSV = os.path.join(os.path.dirname(os.path.abspath(__file__)), "budget_history_web.csv")
@@ -105,17 +111,52 @@ if not check_password():
 tab_plan, tab_history = st.tabs(["This month", "History"])
 
 with tab_plan:
+    # These sit outside the form so they update straight away
+    count = st.radio("How many people?", list(range(1, MAX_PEOPLE + 1)), index=1, horizontal=True)
+ 
+    st.markdown("**Budget split**")
+    chosen = st.multiselect("Buckets to include", PRESET_BUCKETS, default=PRESET_BUCKETS)
+    split = {}
+    grid = st.columns(2)
+    for i, cat in enumerate(chosen):
+        split[cat] = grid[i % 2].number_input(
+            f"{cat} (%)", min_value=0.0, max_value=100.0, value=float(DEFAULT_SPLIT[cat]),
+            step=5.0, format="%g", key=f"pct_{cat}",
+        )
+    split_total = sum(split.values())
+    split_ok = bool(chosen) and abs(split_total - 100) < 0.01
+    if not chosen:
+        st.warning("Pick at least one bucket.")
+    elif split_ok:
+        st.success("Split total: 100% ✓")
+    else:
+        st.error(f"Split total: {split_total:g}%. It needs to add up to 100%.")
+ 
     with st.form("inputs"):
         month = st.text_input("Month", value=date.today().strftime("%b %Y"))
-        c1, c2 = st.columns(2)
-        inc1 = c1.number_input(f"{NAMES[0]}'s income (₹)", min_value=0.0, step=1000.0, format="%.0f")
-        inc2 = c2.number_input(f"{NAMES[1]}'s income (₹)", min_value=0.0, step=1000.0, format="%.0f")
+        entries = []
+        for i in range(count):
+            c_name, c_inc = st.columns(2)
+            name = c_name.text_input(f"Person {i + 1} name", value=DEFAULT_NAMES[i], key=f"name_{i}")
+            income = c_inc.number_input(
+                f"Person {i + 1} income (₹)", min_value=0.0, step=1000.0, format="%.0f", key=f"inc_{i}"
+            )
+            entries.append((name, income))
         overhead = st.number_input("Overhead expenses (₹)", min_value=0.0, step=500.0, format="%.0f")
         submitted = st.form_submit_button("Calculate")
-
+ 
     if submitted:
-        total = inc1 + inc2
-        if total <= 0:
+        names = [n.strip() or f"Person {i + 1}" for i, (n, _) in enumerate(entries)]
+        incomes = [inc for _, inc in entries]
+        total = sum(incomes)
+ 
+        if not split_ok:
+            st.session_state.result = None
+            st.error("Fix the budget split first. It needs to total 100%.")
+        elif len({n.lower() for n in names}) < len(names):
+            st.session_state.result = None
+            st.error("Each person needs a different name.")
+        elif total <= 0:
             st.session_state.result = None
             st.error("Total income is zero.")
         elif overhead >= total:
@@ -125,73 +166,78 @@ with tab_plan:
             budgetable = total - overhead
             st.session_state.result = {
                 "month": month.strip(),
-                "incomes": (inc1, inc2),
+                "people": list(zip(names, incomes)),
                 "overhead": overhead,
                 "total": total,
                 "budgetable": budgetable,
-                "alloc": {c: budgetable * p / 100 for c, p in SPLIT.items()},
+                "split": dict(split),
+                "alloc": {c: budgetable * p / 100 for c, p in split.items()},
                 "saved": False,
             }
-
+ 
     res = st.session_state.get("result")
     if res:
         total = res["total"]
-        shares = [i / total for i in res["incomes"]]
-
+        people = res["people"]
+        shares = [inc / total for _, inc in people]
+ 
         m1, m2, m3 = st.columns(3)
         m1.metric("Combined income", money(total))
         m2.metric("Overheads", money(res["overhead"]))
         m3.metric("Left to budget", money(res["budgetable"]))
-        st.caption(f"{NAMES[0]} contributes {shares[0]:.0%}  |  {NAMES[1]} contributes {shares[1]:.0%}")
-
+        st.caption("  |  ".join(f"{n} contributes {s:.0%}" for (n, _), s in zip(people, shares)))
+ 
         table = pd.DataFrame(
             [
                 {
                     "Bucket": cat,
-                    "%": f"{pct}%",
+                    "%": f"{pct:g}%",
                     "Total": money(res["alloc"][cat]),
-                    NAMES[0]: money(res["alloc"][cat] * shares[0]),
-                    NAMES[1]: money(res["alloc"][cat] * shares[1]),
+                    **{n: money(res["alloc"][cat] * s) for (n, _), s in zip(people, shares)},
                 }
-                for cat, pct in SPLIT.items()
+                for cat, pct in res["split"].items()
             ]
         )
         st.table(table.set_index("Bucket"))
-
+ 
         if st.button("Save to history", disabled=res["saved"]):
-            row = {
-                "Month": res["month"],
-                f"{NAMES[0]} income": res["incomes"][0],
-                f"{NAMES[1]} income": res["incomes"][1],
-                "Total income": total,
-                "Overhead": res["overhead"],
-                "Left to budget": res["budgetable"],
-                **{c: round(v, 2) for c, v in res["alloc"].items()},
-            }
+            row = {"Month": res["month"]}
+            for i in range(MAX_PEOPLE):
+                if i < len(people):
+                    row[f"Person {i + 1}"] = people[i][0]
+                    row[f"Income {i + 1}"] = people[i][1]
+                else:
+                    row[f"Person {i + 1}"] = ""
+                    row[f"Income {i + 1}"] = ""
+            row["Total income"] = total
+            row["Overhead"] = res["overhead"]
+            row["Left to budget"] = res["budgetable"]
+            for c in PRESET_BUCKETS:             # buckets not used this month save as 0
+                row[c] = round(res["alloc"].get(c, 0.0), 2)
             try:
                 save_row(row)
                 res["saved"] = True
                 st.success("Saved to history.")
             except Exception as e:
                 st.error(f"Couldn't save: {e}")
-
+ 
 with tab_history:
     try:
         history = load_history()
     except Exception as e:
         history = pd.DataFrame()
         st.error(f"Couldn't load history: {e}")
-
+ 
     if history.empty:
         st.info("Nothing saved yet. Calculate a month and hit Save.")
     else:
         st.dataframe(history, hide_index=True)
-
+ 
         saving_cols = [c for c in ("Investments", "Emergency fund") if c in history.columns]
         if saving_cols and len(history) > 1:
             st.subheader("Cumulative amount set aside")
             st.line_chart(history.set_index("Month")[saving_cols].cumsum())
-
+ 
         st.download_button(
             "Download as CSV",
             history.to_csv(index=False).encode("utf-8"),
