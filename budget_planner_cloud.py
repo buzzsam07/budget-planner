@@ -308,5 +308,3 @@ with tab_history:
                     st.rerun()
                 except Exception as e:
                     st.error(f"Couldn't delete: {e}")
- 
-Claude finished the response
