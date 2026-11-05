@@ -1,7 +1,7 @@
 """
 Budget Planner - hosted version (Streamlit + Google Sheets)
 
-- Supports 1 to 4 people, names typed in the app.
+- 1 to 4 people, names typed in the app.
 - Pick which buckets to use from a dropdown and set a percentage for each (must total 100%).
 - On Streamlit Community Cloud: password-protected, history saved in Google Sheets.
 - On your own computer with no secrets set up: no password, history saved to a local CSV.
@@ -17,16 +17,16 @@ import streamlit as st
 
 # ---------- EDIT THESE ----------
 PRESET_BUCKETS = ["Essential expenses", "Investments", "Variable expenses", "Emergency fund"]
- 
+
 DEFAULT_SPLIT = {                    # pre-filled percentages
     "Essential expenses": 40,
     "Investments": 30,
     "Variable expenses": 20,
     "Emergency fund": 10,
 }
- 
+
 MAX_PEOPLE = 4
-DEFAULT_NAMES = ["Sam", "Priyanka", "Person 3", "Person 4"]
+DEFAULT_NAMES = ["Person 1", "Person 2", "Person 3", "Person 4"]   # pre-filled name boxes
 # --------------------------------
 
 LOCAL_CSV = os.path.join(os.path.dirname(os.path.abspath(__file__)), "budget_history_web.csv")
@@ -101,10 +101,6 @@ def save_row(row):
 st.set_page_config(page_title="Budget Planner", page_icon="💰")
 st.title("💰 Budget Planner")
 
-if sum(SPLIT.values()) != 100:
-    st.error(f"Split adds up to {sum(SPLIT.values())}%, it must be 100%. Fix SPLIT at the top of the file.")
-    st.stop()
-
 if not check_password():
     st.stop()
 
@@ -113,7 +109,7 @@ tab_plan, tab_history = st.tabs(["This month", "History"])
 with tab_plan:
     # These sit outside the form so they update straight away
     count = st.radio("How many people?", list(range(1, MAX_PEOPLE + 1)), index=1, horizontal=True)
- 
+
     st.markdown("**Budget split**")
     chosen = st.multiselect("Buckets to include", PRESET_BUCKETS, default=PRESET_BUCKETS)
     split = {}
@@ -131,7 +127,7 @@ with tab_plan:
         st.success("Split total: 100% ✓")
     else:
         st.error(f"Split total: {split_total:g}%. It needs to add up to 100%.")
- 
+
     with st.form("inputs"):
         month = st.text_input("Month", value=date.today().strftime("%b %Y"))
         entries = []
@@ -144,12 +140,12 @@ with tab_plan:
             entries.append((name, income))
         overhead = st.number_input("Overhead expenses (₹)", min_value=0.0, step=500.0, format="%.0f")
         submitted = st.form_submit_button("Calculate")
- 
+
     if submitted:
         names = [n.strip() or f"Person {i + 1}" for i, (n, _) in enumerate(entries)]
         incomes = [inc for _, inc in entries]
         total = sum(incomes)
- 
+
         if not split_ok:
             st.session_state.result = None
             st.error("Fix the budget split first. It needs to total 100%.")
@@ -174,19 +170,19 @@ with tab_plan:
                 "alloc": {c: budgetable * p / 100 for c, p in split.items()},
                 "saved": False,
             }
- 
+
     res = st.session_state.get("result")
     if res:
         total = res["total"]
         people = res["people"]
         shares = [inc / total for _, inc in people]
- 
+
         m1, m2, m3 = st.columns(3)
         m1.metric("Combined income", money(total))
         m2.metric("Overheads", money(res["overhead"]))
         m3.metric("Left to budget", money(res["budgetable"]))
         st.caption("  |  ".join(f"{n} contributes {s:.0%}" for (n, _), s in zip(people, shares)))
- 
+
         table = pd.DataFrame(
             [
                 {
@@ -199,7 +195,7 @@ with tab_plan:
             ]
         )
         st.table(table.set_index("Bucket"))
- 
+
         if st.button("Save to history", disabled=res["saved"]):
             row = {"Month": res["month"]}
             for i in range(MAX_PEOPLE):
@@ -220,24 +216,24 @@ with tab_plan:
                 st.success("Saved to history.")
             except Exception as e:
                 st.error(f"Couldn't save: {e}")
- 
+
 with tab_history:
     try:
         history = load_history()
     except Exception as e:
         history = pd.DataFrame()
         st.error(f"Couldn't load history: {e}")
- 
+
     if history.empty:
         st.info("Nothing saved yet. Calculate a month and hit Save.")
     else:
         st.dataframe(history, hide_index=True)
- 
+
         saving_cols = [c for c in ("Investments", "Emergency fund") if c in history.columns]
         if saving_cols and len(history) > 1:
             st.subheader("Cumulative amount set aside")
             st.line_chart(history.set_index("Month")[saving_cols].cumsum())
- 
+
         st.download_button(
             "Download as CSV",
             history.to_csv(index=False).encode("utf-8"),
