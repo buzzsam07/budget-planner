@@ -34,7 +34,13 @@ DEFAULT_SPLIT = {                    # pre-filled percentages
 
 MAX_PEOPLE = 4
 DEFAULT_NAMES = ["Person 1", "Person 2", "Person 3", "Person 4"]   # pre-filled name boxes
+MAX_CUSTOM = 8                       # most custom buckets one budget can have
 # --------------------------------
+
+# Custom buckets can't reuse the names of the history table's own columns
+RESERVED_NAMES = {"month", "saved on", "total income", "overhead", "left to budget"} | {
+    f"{p} {i}" for i in range(1, MAX_PEOPLE + 1) for p in ("person", "income")
+}
 
 
 def secret(key):
@@ -92,20 +98,34 @@ def load_rows(force=False):
 
 
 def rows_to_df(rows):
+    """Flat table for the History tab. Only includes as many people columns as
+    were ever used, and only the buckets that appear in at least one saved month."""
+    max_people = max(len(r["people"]) for r in rows)
+
+    # presets first (fixed order), then any custom buckets in the order first used
+    used = {c for r in rows for c in r["allocations"]}
+    buckets = [c for c in PRESET_BUCKETS if c in used]
+    for r in reversed(rows):                       # rows are newest-first
+        for c in r["allocations"]:
+            if c not in buckets:
+                buckets.append(c)
+
     out = []
     for r in rows:
         d = {"Month": r["month"], "Saved on": str(r["created_at"])[:10]}
-        for i in range(MAX_PEOPLE):
+        for i in range(max_people):
             p = r["people"][i] if i < len(r["people"]) else None
             d[f"Person {i + 1}"] = p["name"] if p else ""
             d[f"Income {i + 1}"] = p["income"] if p else None
         d["Total income"] = r["total_income"]
         d["Overhead"] = r["overhead"]
         d["Left to budget"] = r["left_to_budget"]
-        for c in PRESET_BUCKETS:
-            d[c] = r["allocations"].get(c, 0)
+        for c in buckets:
+            d[c] = r["allocations"].get(c)         # blank if not used that month
         out.append(d)
-    return pd.DataFrame(out)
+    df = pd.DataFrame(out)
+    df.attrs["buckets"] = buckets
+    return df
 
 
 def auth_screen():
@@ -157,16 +177,41 @@ with tab_plan:
 
     st.markdown("**Budget split**")
     chosen = st.multiselect("Buckets to include", PRESET_BUCKETS, default=PRESET_BUCKETS)
+    custom_raw = st.text_input(
+        "Add your own buckets (comma separated, press Enter)",
+        placeholder="e.g. Travel, Insurance, Gifts",
+    )
+
+    customs, skipped = [], []
+    taken = {c.lower() for c in PRESET_BUCKETS}
+    for part in custom_raw.split(","):
+        nm = part.strip()[:30]
+        if not nm:
+            continue
+        if nm.lower() in RESERVED_NAMES or nm.lower() in taken:
+            skipped.append(nm)
+        elif len(customs) >= MAX_CUSTOM:
+            skipped.append(nm)
+        else:
+            customs.append(nm)
+            taken.add(nm.lower())
+    if skipped:
+        st.warning(
+            "Skipped (name already used, reserved, or over the limit of "
+            f"{MAX_CUSTOM}): {', '.join(skipped)}"
+        )
+
+    all_buckets = chosen + customs
     split = {}
     grid = st.columns(2)
-    for i, cat in enumerate(chosen):
+    for i, cat in enumerate(all_buckets):
         split[cat] = grid[i % 2].number_input(
-            f"{cat} (%)", min_value=0.0, max_value=100.0, value=float(DEFAULT_SPLIT[cat]),
+            f"{cat} (%)", min_value=0.0, max_value=100.0, value=float(DEFAULT_SPLIT.get(cat, 0)),
             step=5.0, format="%g", key=f"pct_{cat}",
         )
     split_total = sum(split.values())
-    split_ok = bool(chosen) and abs(split_total - 100) < 0.01
-    if not chosen:
+    split_ok = bool(all_buckets) and abs(split_total - 100) < 0.01
+    if not all_buckets:
         st.warning("Pick at least one bucket.")
     elif split_ok:
         st.success("Split total: 100% ✓")
@@ -310,12 +355,15 @@ with tab_history:
             df = rows_to_df(rows)
             st.dataframe(df, hide_index=True)
 
-            cols = [c for c in ("Investments", "Emergency fund") if c in df.columns]
-            if cols and len(df) > 1:
+            bucket_cols = df.attrs.get("buckets", [])
+            if bucket_cols and len(df) > 1:
                 st.subheader("Cumulative amount set aside")
-                chart = df.iloc[::-1][cols].cumsum().reset_index(drop=True)
-                chart.index = pd.RangeIndex(1, len(chart) + 1, name="Entry #")
-                st.line_chart(chart)
+                default_cols = [c for c in ("Investments", "Emergency fund") if c in bucket_cols] or bucket_cols[:1]
+                picked = st.multiselect("Buckets to chart", bucket_cols, default=default_cols)
+                if picked:
+                    chart = df.iloc[::-1][picked].fillna(0).cumsum().reset_index(drop=True)
+                    chart.index = pd.RangeIndex(1, len(chart) + 1, name="Entry #")
+                    st.line_chart(chart)
 
             st.subheader("Export")
             e1, e2 = st.columns(2)
