@@ -9,7 +9,7 @@ Streamlit secrets (optional; without them the app runs as a login-free calculato
     supabase_url = "https://xxxx.supabase.co"
     supabase_anon_key = "your anon / publishable key"
 """
-import bp_core
+
 import io
 import re
 from datetime import date
@@ -26,9 +26,10 @@ except Exception:                      # library missing -> run without accounts
 PRESET_BUCKETS = ["Essential expenses", "Investments", "Variable expenses", "Emergency fund"]
 
 DEFAULT_SPLIT = {                    # pre-filled percentages
-    "Investments": 50,
-    "Variable expenses": 30,
-    "Emergency fund": 20,
+    "Essential expenses": 40,
+    "Investments": 30,
+    "Variable expenses": 20,
+    "Emergency fund": 10,
 }
 
 MAX_PEOPLE = 4
