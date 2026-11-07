@@ -9,7 +9,7 @@ Streamlit secrets (optional; without them the app runs as a login-free calculato
     supabase_url = "https://xxxx.supabase.co"
     supabase_anon_key = "your anon / publishable key"
 """
-
+import bp_core
 import io
 import re
 from datetime import date
