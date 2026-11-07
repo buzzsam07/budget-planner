@@ -26,10 +26,9 @@ except Exception:                      # library missing -> run without accounts
 PRESET_BUCKETS = ["Essential expenses", "Investments", "Variable expenses", "Emergency fund"]
 
 DEFAULT_SPLIT = {                    # pre-filled percentages
-    "Essential expenses": 40,
-    "Investments": 30,
-    "Variable expenses": 20,
-    "Emergency fund": 10,
+    "Investments": 50,
+    "Variable expenses": 30,
+    "Emergency fund": 20,
 }
 
 MAX_PEOPLE = 4
